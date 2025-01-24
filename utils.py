@@ -9,6 +9,7 @@ import torch
 from torchvision import ops
 import torch.nn.functional as F
 import torch.optim as optim
+import math
 
 def parse_annotation(annotation_path, imgs_dir):
     #traverse xml
@@ -55,18 +56,17 @@ def display_img(imgs_data, fig, axes):
     return fig, axes
 
 def display_boundingbox(bboxes, classes, fig, axes):
-    bboxes = ops.box_convert(bboxes, in_fmt='xyxy', out_fmt='xywh') #(xmin, ymin, xmax, ymax) to (x_center, y_center, width, height)
+    bboxes = ops.box_convert(bboxes, in_fmt='xyxy', out_fmt='xywh') #(xmin, ymin, xmax, ymax) to (x_top_left, y_top_left, width, height)
     class_index = 0
+    # bboxes là tensor có kích thước (n, 4) với n là số bounding box có trong ảnh
     for box in bboxes:
-        x_center, y_center, width, height = box.numpy()
-
-        #draw rectangle with edgecolor=red and no face color
-        rect = patches.Rectangle((x_center, y_center), width, height,
+        x_top_left, y_top_left, width, height = box.numpy()
+        rect = patches.Rectangle((int(x_top_left), int(y_top_left)), int(width), int(height),
                                  linewidth = 1, edgecolor = 'green',
                                  facecolor = 'none')
         
         axes.add_patch(rect)
-        axes.text(x_center + 5, y_center + 20, classes[class_index],
+        axes.text(int(x_top_left), int(y_top_left), classes[class_index],
                   bbox=dict(facecolor='yellow', alpha=0.5))
         class_index += 1
     return fig, axes
@@ -83,4 +83,36 @@ def display_anchor_centers(centers_x, centers_y, fig, axes):
     return fig, axes
 
 def display_anchor_boxes(centers, fig, axes):
-    pass
+    return fig, axes
+
+def generate_anchor_boxes(centers, imgsize): # centers = (centers_x, centers_y)
+    '''
+    với mỗi anchor center, ta sẽ tạo ra 9 anchor box : kích thước là 32x32, 64x64, 128x128 và với mỗi kích thước
+    thì có 3 tỉ lệ là 1:1, 1:2, 2:1 tương ứng với height và width
+    '''
+    ratios = [0.5, 1, 2] # 1:2, 1:1, 2:1 width:height
+    scales = [32, 64, 128]
+
+    anchor_boxes = []
+    for center in centers:
+        list_boxes = []
+        for scale in scales:
+            for ratio in ratios:
+                height = int(math.sqrt(math.pow(scale, 2) / ratio))
+                width = int(math.pow(scale, 2) / height)
+                x_top_left = int(center[0] - width / 2)
+                y_top_left = int(center[1] - height / 2)
+                if check_valid_anchor([x_top_left, y_top_left, width, height], imgsize):
+                    list_boxes.append(torch.Tensor([x_top_left, y_top_left, width, height]))
+        if len(list_boxes) > 0:
+            anchor_boxes.append(torch.stack(list_boxes))
+    return anchor_boxes # có kích thước (n, 4) với n là số anchor box và chứa list các tensor
+
+def check_valid_anchor(anchor_box, imgsize):
+    x_top_left, y_top_left, width, height = anchor_box
+    if x_top_left >= 1 and y_top_left >=1 and x_top_left + width < imgsize[1]  and y_top_left + height < imgsize[0]:
+        return True
+    return False
+
+
+    
