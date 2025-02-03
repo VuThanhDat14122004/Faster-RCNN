@@ -52,7 +52,7 @@ def display_img(imgs_data, fig, axes):
             # img = torchvision.transforms.functional.rotate(img, 180)
             img = img.permute(1,2,0).numpy() # w h c
         axes[i].imshow(img)
-        
+    
     return fig, axes
 
 def display_boundingbox(bboxes, classes, fig, axes):
@@ -83,15 +83,16 @@ def display_anchor_centers(centers_x, centers_y, fig, axes):
     return fig, axes
 
 def display_anchor_boxes(centers, fig, axes):
-    return fig, axes
+    pass
 
-def generate_anchor_boxes(centers, imgsize): # centers = (centers_x, centers_y)
+def generate_anchor_boxes(centers, imgsize, scales_img ): # centers = (centers_x, centers_y)
     '''
-    với mỗi anchor center, ta sẽ tạo ra 9 anchor box : kích thước là 32x32, 64x64, 128x128 và với mỗi kích thước
+    với mỗi anchor center, ta sẽ tạo ra 9 anchor box : kích thước là 2 x 2, 4 x 4, 6 x 6 pixel của feature map và với mỗi kích thước
     thì có 3 tỉ lệ là 1:1, 1:2, 2:1 tương ứng với height và width
     '''
     ratios = [0.5, 1, 2] # 1:2, 1:1, 2:1 width:height
-    scales = [32, 64, 128]
+    scales = [2, 4, 6]
+    scales = [scale * scales_img for scale in scales]
 
     anchor_boxes = []
     for center in centers:
@@ -106,13 +107,85 @@ def generate_anchor_boxes(centers, imgsize): # centers = (centers_x, centers_y)
                     list_boxes.append(torch.Tensor([x_top_left, y_top_left, width, height]))
         if len(list_boxes) > 0:
             anchor_boxes.append(torch.stack(list_boxes))
-    return anchor_boxes # có kích thước (n, 4) với n là số anchor box và chứa list các tensor
+    return anchor_boxes # list chứa các tensor có kích thước (n, 4) với n là số anchor box hợp lệ của mỗi anchor
 
 def check_valid_anchor(anchor_box, imgsize):
     x_top_left, y_top_left, width, height = anchor_box
     if x_top_left >= 1 and y_top_left >=1 and x_top_left + width < imgsize[1]  and y_top_left + height < imgsize[0]:
         return True
     return False
+
+def calculate_IOU( anchor_box, ground_truth_box):
+    '''
+    anchor_box: (x_top_left, y_top_left, width, height)
+    ground_truth_box: (x_min, y_min, x_max, y_max)
+    '''
+    anchor_box_xyxy = ops.box_convert(anchor_box, in_fmt='xywh', out_fmt='xyxy') # cần nhân lên với scale để lấy tọa độ thực tế
+    x_min_anchor, y_min_anchor, x_max_anchor, y_max_anchor = anchor_box_xyxy.squeeze(0).numpy()
+    print(x_min_anchor, y_min_anchor, x_max_anchor, y_max_anchor)
+    print(ground_truth_box)
+    print("-----\n")
+    x_min_gt, y_min_gt, x_max_gt, y_max_gt = ground_truth_box
+    x_min_inter = max(x_min_anchor, x_min_gt)
+    y_min_inter = max(y_min_anchor, y_min_gt)
+    x_max_inter = min(x_max_anchor, x_max_gt)
+    y_max_inter = min(y_max_anchor, y_max_gt)
+    inter_area = max(0, x_max_inter - x_min_inter) * max(0, y_max_inter - y_min_inter)
+    anchor_area = (x_max_anchor - x_min_anchor) * (y_max_anchor - y_min_anchor)
+    gt_area = (x_max_gt - x_min_gt) * (y_max_gt - y_min_gt)
+    union_area = anchor_area + gt_area - inter_area
+    iou = inter_area / union_area
+    print(f"iou: {iou}")
+    return iou
+def get_bboxes_negative_and_positive(anchor_boxes, ground_truth_boxes, threshold = 0.5):
+
+    '''
+    lấy ra các anchor box có IOU lớn hơn threshold với ground truth box
+    '''
+    bboxes_postive = []
+    bboxes_negative = []
+    iou_pos_list = []
+    for ground_truth_box in ground_truth_boxes:
+        ious_1_object = []
+        bboxes_pos_1_object = []
+        bboxes_neg_1_object = []
+        for anchor_box in anchor_boxes:
+            for box in anchor_box:
+                iou = calculate_IOU(box, ground_truth_box)
+                if iou > threshold:
+                    bboxes_pos_1_object.append(box)
+                    ious_1_object.append(iou)
+                else:
+                    bboxes_neg_1_object.append(box)
+        iou_pos_list.append(ious_1_object)
+        try:
+            bboxes_postive.append(torch.stack(bboxes_pos_1_object))
+        except:
+            bboxes_postive.append(torch.Tensor())
+        try:
+            bboxes_negative.append(torch.stack(bboxes_neg_1_object))
+        except:
+            bboxes_negative.append(torch.Tensor())
+    return bboxes_postive, bboxes_negative, iou_pos_list
+
+def calculate_location_iou_label(anchor_boxes, ground_truth_boxes):
+    '''
+    return 3 list
+    1. localtion: [[dx, dy, dw, dh], ...], size: (N, 4), với N là số anchor box
+    2. iou: [[iou_gt1, iou_gt2,...], ...], size: (N, M), với N như trên, M là số ground truth box trong ảnh
+    3. label: [label1, ...], size: (N,), với N như trên
+    '''
+    location_box = []
+    iou_boxes = []
+    for list_anchor_box in anchor_boxes:
+        for anchor_box in list_anchor_box:
+            location_box.append(anchor_box)
+            iou_box = []
+            for ground_truth_box in ground_truth_boxes:
+                iou_box.append(calculate_IOU(anchor_box, ground_truth_box))
+            iou_boxes.append(torch.tensor(iou_box))
+    label_boxes = torch.full((len(location_box),), -1)
+    return torch.stack(location_box), torch.stack(iou_boxes), label_boxes
 
 
     
