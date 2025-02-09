@@ -21,4 +21,3 @@ class FeatureExtractor(nn.Module):
         return self.backbone(x)
 
 #dev2
-
