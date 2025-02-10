@@ -258,9 +258,9 @@ def generate_proposals(anchors, offsets):
 
     # convert anchor boxes from xyxy to xywh
     anchors = ops.box_convert(anchors, in_fmt='xyxy', out_fmt='xywh')
-    
+    offsets = offsets.to(anchors.device)
     # generate proposals
-    proposals = torch.zeros(anchors.size())
+    proposals = torch.zeros(anchors.size()).to(anchors.device)
     proposals[:, 0] = anchors[:, 0] + offsets[:, 0] * anchors[:, 2]
     proposals[:, 1] = anchors[:, 1] + offsets[:, 1] * anchors[:, 3]
     proposals[:, 2] = anchors[:, 2] * torch.exp(offsets[:, 2])
@@ -281,7 +281,8 @@ def calc_gt_offset(pos_anc_coords, gt_bbox_mapping): # n_pos x 4
     output:
         gt_offsets: tensor (n_pos, 4)
     '''
-    gt_offsets = torch.zeros_like(pos_anc_coords)
+    pos_anc_coords = pos_anc_coords.to(gt_bbox_mapping.device)
+    gt_offsets = torch.zeros_like(pos_anc_coords).to(gt_bbox_mapping.device)
     width_anchor_boxes = pos_anc_coords[:, 2]
     height_anchor_boxes = pos_anc_coords[:, 3]
     centers_x = pos_anc_coords[:, 0] + width_anchor_boxes / 2
