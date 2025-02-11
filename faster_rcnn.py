@@ -52,8 +52,8 @@ def training(model, dataloader, learning_rate, n_epoch, device):
             optimizer.step()
 
             loss_o += loss.item()
-            loss_list.append(loss_o)
             pbar.set_description(f'Epoch {i+1}/{n_epoch} Loss: {loss.item():.4f}')
+        loss_list.append(loss_o/len(dataloader))
     return loss_list
 
 # Feature Extractor
