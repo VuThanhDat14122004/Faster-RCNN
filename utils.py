@@ -12,11 +12,25 @@ import torch.optim as optim
 import math
 
 def parse_annotation(annotation_path, imgs_dir):
+    '''
+    input:
+        annotation_path: path to annotation folder
+        imgs_dir: path to image folder
+    output:
+        imgs_list_dir: list of image directory, len = N (N is number of images)
+        gt_class_all: list of list of class of bounding box, size = (N, M) with M is number of bounding box in each image,
+                        M different in each image, N as above
+        gt_boxes_all: list of list of bounding box, size = (N, M, 4), M as above, 4 is (xmin, ymin, xmax, ymax)
+
+    '''
     #traverse xml
     gt_class_all = []
     gt_boxes_all = []
     imgs_list_dir = []
+    count = 0
     for xml_file in os.listdir(annotation_path):
+        if count >= 500:
+            break
         file_path = os.path.join(annotation_path, xml_file)
         tree = ET.parse(file_path)
         root = tree.getroot()
@@ -32,21 +46,42 @@ def parse_annotation(annotation_path, imgs_dir):
                                   float(bndbox[2].text), float(bndbox[3].text)])
         gt_boxes_all.append(torch.Tensor(list_gt_boxes))
         gt_class_all.append(list_gt_class)
+        count += 1
     return imgs_list_dir, gt_class_all, gt_boxes_all
 
 def encode_class(gt_classes_all):
+    '''
+    input:
+        gt_classes_all: list of all classes in all images,
+        size: (N, M) with N is number of images, M is number of bounding box in each image
+    output:
+        dict: {'class_name1': index1, 'class_name2': index2, ...}
+    '''
     result = dict()
     list_all_class = [item for list_item in gt_classes_all for item in list_item]
-    set_all_class = set(list_all_class)
+    set_all_class = set(list_all_class) # remove duplicate
     classes = list(set_all_class)
     for i in range(len(classes)):
         result.update({classes[i]: i})
     return result
 def decode_class(dict_class):
+    '''
+    input:
+        dict: {'class_name1': index1, 'class_name2': index2, ...}
+    output:
+        dict: {index1: 'class_name1', index2: 'class_name2', ...}
+    '''
     result = {v:k for k, v in dict_class.items()}
     return result
 
 def display_img(imgs_data, fig, axes):
+    '''
+    input:
+        imgs_data: list of image data, size = N (N images)
+        fig, axes: figure and axes of matplotlib
+    output:
+        fig, axes: figure and axes of matplotlib
+    '''
     for i, img in enumerate(imgs_data):
         if type(img) == torch.Tensor:
             img = img.permute(1,2,0).numpy() # w h c
@@ -55,7 +90,19 @@ def display_img(imgs_data, fig, axes):
     return fig, axes
 
 def display_boundingbox(bboxes, classes, fig, axes):
-    bboxes = ops.box_convert(bboxes, in_fmt='xyxy', out_fmt='xywh') #(xmin, ymin, xmax, ymax) to (x_top_left, y_top_left, width, height)
+    '''
+    display bounding box on an image
+    input:
+        bboxes: list of bounding box of an image, size = (M, 4)
+                with M is number of bounding box in an image
+        classes: list class of bounding box, size = M
+        fig, axes: figure and axes of matplotlib
+    output:
+        fig, axes: figure and axes of matplotlib
+    '''
+    #(xmin, ymin, xmax, ymax) to (x_top_left, y_top_left, width, height)
+    bboxes = ops.box_convert(bboxes, in_fmt='xyxy',
+                             out_fmt='xywh') 
     class_index = 0
     # bboxes là tensor có kích thước (n, 4) với n là số bounding box có trong ảnh
     for box in bboxes:
@@ -71,44 +118,45 @@ def display_boundingbox(bboxes, classes, fig, axes):
     return fig, axes
 
 def generate_anchor_centers(output_size, scale):
-    centers_x = (torch.arange(0, output_size[1]) + 0.5) * int(scale) # dùng + 0.5 để những anchor ở góc trái và góc trên không bị quá sát vào các biên
+    '''
+    input:
+        output_size: (height, width) of feature map
+        scale: image_size / feature_map size
+    output:
+        centers_x, centers_y: list of x, y of anchor centers in image
+    '''
+    centers_x = (torch.arange(0, output_size[1]) + 0.5) * int(scale)
+    # dùng + 0.5 để những anchor ở góc trái và góc trên không bị quá sát vào các biên
     centers_y = (torch.arange(0, output_size[0]) + 0.5) * int(scale)
     return centers_x, centers_y
 
 def display_anchor_centers(centers_x, centers_y, fig, axes):
+    '''
+    input: 
+        centers_x, centers_y:
+            center_x_size: (n, ) with n is number of center width
+            center_y_size: (m, ) with m is number of center height
+        fig, axes: figure and axes of matplotlib
+    output:
+        fig, axes: figure and axes of matplotlib
+    '''
     for i in centers_x:
         for j in centers_y:
-            axes.scatter(i, j, color='red', marker='+')
+            axes.scatter(i, j,
+                         color='red',
+                         marker='+')
     return fig, axes
 
-# def generate_anchor_boxes(centers, imgsize, scales_img): # centers = (centers_x, centers_y)
-#     '''
-#     với mỗi anchor center, ta sẽ tạo ra 9 anchor box : kích thước là 2 x 2, 4 x 4, 6 x 6 pixel của feature map và với mỗi kích thước
-#     thì có 3 tỉ lệ là 1:1, 1:2, 2:1 tương ứng với height và width
-#     '''
-#     ratios = [0.5, 1, 2] # 1:2, 1:1, 2:1 width:height
-#     scales = [2, 4, 6]
-#     scales = [scale * scales_img for scale in scales]
-
-#     anchor_boxes = []
-#     for center in centers:
-#         list_boxes = []
-#         for scale in scales:
-#             for ratio in ratios:
-#                 height = int(math.sqrt(math.pow(scale, 2) / ratio))
-#                 width = int(math.pow(scale, 2) / height)
-#                 x_top_left = int(center[0] - width / 2)
-#                 y_top_left = int(center[1] - height / 2)
-#                 if check_valid_anchor([x_top_left, y_top_left, width, height], imgsize):
-#                     list_boxes.append(torch.Tensor([x_top_left, y_top_left, width, height]))
-#         if len(list_boxes) > 0:
-#             anchor_boxes.append(torch.stack(list_boxes))
-#     return anchor_boxes # list chứa các tensor có kích thước (n, 4) với n là số anchor box hợp lệ của mỗi anchor
-
-def generate_all_anchor_boxes(centers, scales_img): # centers = (centers_x, centers_y)
+def generate_all_anchor_boxes(centers, scales_img):
     '''
-    với mỗi anchor center, ta sẽ tạo ra 9 anchor box : kích thước là 2 x 2, 4 x 4, 6 x 6 pixel của feature map và với mỗi kích thước
-    thì có 3 tỉ lệ là 1:1, 1:2, 2:1 tương ứng với height và width
+    with each anchor center, create 9 anchor boxes: size is 2 x 2, 4 x 4, 6 x 6 pixel of feature map 
+            and have 3 scales ratio 1:1, 1:2, 2:1 corresponding height:width with each size of bounding box
+    input:
+        centers: (centers_x, centers_y)
+        scales_img: scale of image to feature map (img_size / feature_map_size)
+    output:
+        anchor_boxes: list of tensor with size (9, 4) with 9 is number of anchor boxes of each anchor center
+            len of list is number of anchor center
     '''
     ratios = [0.5, 1, 2] # 1:2, 1:1, 2:1 width:height
     scales = [2, 4, 6]
@@ -123,24 +171,24 @@ def generate_all_anchor_boxes(centers, scales_img): # centers = (centers_x, cent
                 width = int(math.pow(scale, 2) / height)
                 x_top_left = int(center[0] - width / 2)
                 y_top_left = int(center[1] - height / 2)
-                list_boxes.append(torch.Tensor([x_top_left, y_top_left, width, height]))
+                list_boxes.append(torch.Tensor([x_top_left, y_top_left,
+                                                width, height]))
         if len(list_boxes) > 0:
             anchor_boxes.append(torch.stack(list_boxes))
-    return anchor_boxes # list chứa các tensor có kích thước (n, 4) với n là tất cả số anchor box của mỗi anchor
-
-def check_valid_anchor(anchor_box, imgsize):
-    x_top_left, y_top_left, width, height = anchor_box
-    if x_top_left >= 1 and y_top_left >=1 and x_top_left + width < imgsize[1]  and y_top_left + height < imgsize[0]:
-        return True
-    return False
+    return anchor_boxes
 
 def calculate_IOU( anchor_box, ground_truth_box):
     '''
-    anchor_box: (x_top_left, y_top_left, width, height)
-    ground_truth_box: (x_min, y_min, x_max, y_max)
+    Calculate IOU between an anchor box and a ground truth box
+    input:
+        anchor_box: (x_top_left, y_top_left, width, height)
+        ground_truth_box: (x_min, y_min, x_max, y_max)
+    output:
+        iou score
     '''
-    anchor_box_xyxy = ops.box_convert(anchor_box, in_fmt='xywh', out_fmt='xyxy') # cần nhân lên với scale để lấy tọa độ thực tế
-    x_min_anchor, y_min_anchor, x_max_anchor, y_max_anchor = anchor_box_xyxy.squeeze(0).numpy()
+    anchor_box_xyxy = ops.box_convert(anchor_box, in_fmt='xywh', out_fmt='xyxy')
+    x_min_anchor, y_min_anchor,\
+        x_max_anchor, y_max_anchor = anchor_box_xyxy.squeeze(0).numpy()
     x_min_gt, y_min_gt, x_max_gt, y_max_gt = ground_truth_box
     x_min_inter = max(x_min_anchor, x_min_gt)
     y_min_inter = max(y_min_anchor, y_min_gt)
@@ -152,55 +200,31 @@ def calculate_IOU( anchor_box, ground_truth_box):
     union_area = anchor_area + gt_area - inter_area
     iou = inter_area / union_area
     return iou
-# def get_bboxes_negative_and_positive(anchor_boxes, ground_truth_boxes, threshold = 0.5):
-
-#     '''
-#     lấy ra các anchor box có IOU lớn hơn threshold với ground truth box
-#     '''
-#     bboxes_postive = []
-#     bboxes_negative = []
-#     iou_pos_list = []
-#     for ground_truth_box in ground_truth_boxes:
-#         ious_1_object = []
-#         bboxes_pos_1_object = []
-#         bboxes_neg_1_object = []
-#         for anchor_box in anchor_boxes:
-#             for box in anchor_box:
-#                 iou = calculate_IOU(box, ground_truth_box)
-#                 if iou > threshold:
-#                     bboxes_pos_1_object.append(box)
-#                     ious_1_object.append(iou)
-#                 else:
-#                     bboxes_neg_1_object.append(box)
-#         iou_pos_list.append(ious_1_object)
-#         try:
-#             bboxes_postive.append(torch.stack(bboxes_pos_1_object))
-#         except:
-#             bboxes_postive.append(torch.Tensor())
-#         try:
-#             bboxes_negative.append(torch.stack(bboxes_neg_1_object))
-#         except:
-#             bboxes_negative.append(torch.Tensor())
-#     return bboxes_postive, bboxes_negative, iou_pos_list
 
 def calculate_location_iou_label(anchor_boxes, ground_truth_boxes_batch):
 
     '''
     input:
-        anchor_boxes: NxMx4; N là số anchor, M là số anchor box của mỗi anchor
-        gt_boxes_batch: batchxMx4; M là số ground truth box của mỗi ảnh
-    return 3 list
-    1. localtion: [[[dx, dy, dw, dh], ...]], size: (batch, N, 4), với N là số anchor box
-    2. iou: [[[iou_gt1, iou_gt2,...], ...]], size: (batch, N, M), với N như trên, M là số ground truth box trong ảnh
-    3. label: [[label1, ...]], size: (batch, N,), với N như trên
+        anchor_boxes: Nx9x4; N is number of anchor, M is number of anchor boxes of each anchor
+        gt_boxes_batch: batchxMx4; M is number of ground truth box of each image
+    output:
+        1. localtion: [[[dx, dy, dw, dh], ...]], size: (batch, N, 4), N is number of anchor boxes of all anchor
+        2. iou: [[[iou_gt1, iou_gt2,...], ...]], size: (batch, N, M), N as above, M is number of ground truth box of an image
+        3. label: [[label1, ...]], size: (batch, N,), N as above
+        batch is currently 1
     '''
-    location_box_batch = torch.zeros(ground_truth_boxes_batch.size(0), anchor_boxes.size(0)*anchor_boxes.size(1), 4)
-    iou_boxes_batch = torch.zeros(ground_truth_boxes_batch.size(0), anchor_boxes.size(0)*anchor_boxes.size(1), ground_truth_boxes_batch.size(1))
-    label_boxes_batch = torch.zeros(ground_truth_boxes_batch.size(0), anchor_boxes.size(0)*anchor_boxes.size(1))
+    location_box_batch = torch.zeros(ground_truth_boxes_batch.size(0),
+                                     anchor_boxes.size(0)*anchor_boxes.size(1), 4)
+    iou_boxes_batch = torch.zeros(ground_truth_boxes_batch.size(0),
+                                  anchor_boxes.size(0)*anchor_boxes.size(1),
+                                  ground_truth_boxes_batch.size(1))
+    label_boxes_batch = torch.zeros(ground_truth_boxes_batch.size(0),
+                                    anchor_boxes.size(0)*anchor_boxes.size(1))
     cnt = 0
     for ground_truth_boxes in ground_truth_boxes_batch:
         location_box = torch.zeros(anchor_boxes.size(0)*anchor_boxes.size(1), 4)
-        iou_boxes = torch.zeros(anchor_boxes.size(0)*anchor_boxes.size(1), ground_truth_boxes_batch.size(1))
+        iou_boxes = torch.zeros(anchor_boxes.size(0)*anchor_boxes.size(1),
+                                ground_truth_boxes_batch.size(1))
         sub_cnt = 0
         for list_anchor_box in anchor_boxes:
             for anchor_box in list_anchor_box:
@@ -220,36 +244,11 @@ def calculate_location_iou_label(anchor_boxes, ground_truth_boxes_batch):
     return location_box_batch, iou_boxes_batch, label_boxes_batch
 
 
-# def gen_anchor_boxes_base(centers_x, centers_y, scales_img, imgsize):
-
-#     ratios = [0.5, 1, 2] # 1:2, 1:1, 2:1 width:height
-#     scales = [2, 4, 6]
-#     scales = [scale * scales_img for scale in scales]
-#     n_anchor_boxes_each_center = len(ratios) * len(scales)
-#     anchor_boxes_base = torch.zeros(1, centers_x.size(0), centers_y.size(0), n_anchor_boxes_each_center, 4)
-#     for ix, xc in enumerate(centers_x):
-#         for iy, yc in enumerate(centers_y):
-#             anchor_boxes = torch.zeros(n_anchor_boxes_each_center, 4)
-#             cnt = 0
-#             for scale in scales:
-#                 for ratio in ratios:
-#                     height = int(math.sqrt(math.pow(scale, 2) / ratio))
-#                     width = int(math.pow(scale, 2) / height)
-#                     x_top_left = int(xc - width / 2)
-#                     y_top_left = int(yc - height / 2)
-#                     x_bot_right = int(xc + width / 2)
-#                     y_bot_right = int(yc + height / 2)
-#                     anchor_boxes[cnt, :] = torch.Tensor([x_top_left, y_top_left,
-#                                                          x_bot_right, y_bot_right])
-#                     cnt += 1
-#             anchor_boxes_base[:, ix, iy, :, :] = ops.clip_boxes_to_image(anchor_boxes, imgsize)
-#     return anchor_boxes_base # size: (1, centers_x.size(0), centers_y.size(0), n_anchor_boxes_each_center, 4)
-
 def generate_proposals(anchors, offsets):
 
     '''
-    sinh ra proposals region bằng cách điều chỉnh anchor boxes (positive) bằng offsets (cái mà mô hình cần học)
-    input:
+    generate proposals region by adjusting positive anchor boxes by offsets, offsets is what model need to learn
+    input: N is number of anchor boxes
         anchors: ((x, y, x, y),..) Nx4
         offsets: ((tx, ty, tw, th),..) Nx4
     output:
@@ -274,7 +273,7 @@ def generate_proposals(anchors, offsets):
 
 def calc_gt_offset(pos_anc_coords, gt_bbox_mapping): # n_pos x 4
     '''
-    tính offset giữa positive anchor boxes với gt boxes mà nó đại diện
+    calculate offset between positive anchor boxes and the gt boxes it represents
     input:
         pos_anc_coords: tensor (n_pos, 4)
         gt_bbox_mapping: tensor (n_pos, 4)
@@ -293,9 +292,9 @@ def calc_gt_offset(pos_anc_coords, gt_bbox_mapping): # n_pos x 4
     centers_x_gt = gt_bbox_mapping[:, 0] + width_gt_boxes / 2
     centers_y_gt = gt_bbox_mapping[:, 1] + height_gt_boxes / 2
 
-    # Chỉnh lại width và height của anchor boxes để tránh log(0)
+    # adjust width and height of anchor boxes avoid log(0)
     eps = torch.finfo(width_anchor_boxes.dtype).eps
-    width_anchor_boxes = torch.clamp_min(width_anchor_boxes, eps) # clamp_min: giữ giá trị nhỏ nhất là eps, tránh = 0
+    width_anchor_boxes = torch.clamp_min(width_anchor_boxes, eps) # clamp_min: keep min value is là eps, avoid = 0
     height_anchor_boxes = torch.clamp_min(height_anchor_boxes, eps)
 
     gt_offsets[:,0] = (centers_x_gt - centers_x) / width_anchor_boxes
@@ -307,15 +306,33 @@ def calc_gt_offset(pos_anc_coords, gt_bbox_mapping): # n_pos x 4
     
 
 def calc_cls_loss(conf_scores_pos, conf_score_neg):
+    '''
+    calculate classification loss
+    input:
+        conf_scores_pos: tensor (n_pos, 2)
+        conf_score_neg: tensor (n_neg, 2)
+    output:
+        loss: tensor (1)
+    '''
     target_pos = torch.ones_like(conf_scores_pos)
     target_neg = torch.zeros_like(conf_score_neg)
 
     target = torch.cat((target_pos, target_neg))
     input = torch.cat((conf_scores_pos, conf_score_neg))
 
-    loss = F.binary_cross_entropy_with_logits(input, target, reduction='sum')
+    loss = F.binary_cross_entropy_with_logits(input, target,
+                                              reduction='sum')
     return loss
 
 def calc_bbox_reg_loss(gt_offset, reg_offset_pos):
-    loss = F.smooth_l1_loss(reg_offset_pos, gt_offset, reduction='sum')
+    '''
+    calculate bounding box regression loss
+    input:
+        gt_offset: tensor (n_pos, 4)
+        reg_offset_pos: tensor (n_pos, 4)
+    output:
+        loss: tensor (1)
+    '''
+    loss = F.smooth_l1_loss(reg_offset_pos, gt_offset,
+                            reduction='sum')
     return loss
