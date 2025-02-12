@@ -45,4 +45,4 @@ Video: <a href="https://www.youtube.com/watch?v=4yOcsWg-7g8">
         video
        </a>
 
-Here are the documents, repositories, and videos I referenced for the implementation.
+Here are the documents, blog and videos I referenced for the implementation.
