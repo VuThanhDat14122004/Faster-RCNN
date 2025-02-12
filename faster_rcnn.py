@@ -1,23 +1,10 @@
-import os
-
 from utils import *
 from model import *
 
 import torch
-import torchvision
-from torchvision import ops
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-from torch.nn.utils.rnn import pad_sequence
-import numpy as np
-from skimage import io
-from skimage.transform import resize
-import matplotlib.pyplot as plt
-import random
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-import matplotlib.patches as patches
-
+from torch import optim
 
 # Create dataset and dataloader
 annotations_path = "VOCdevkit/VOC2007/Annotations"
@@ -63,13 +50,13 @@ feature_extractor =  FeatureExtractor()
 proposal_module = ProposalModule()
 
 # Two Stage Detector
-two_stage_detector = TwoStageDetector(feature_extractor, proposal_module, len(idx2name))
+two_stage_detector = TwoStageDetector(feature_extractor,
+                                      proposal_module, len(idx2name))
 
 # training
 learning_rate = 1e-3
 n_epochs = 1
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-loss_list = training(two_stage_detector, dataloader, learning_rate, n_epochs, device)
-
-
+loss_list = training(two_stage_detector, dataloader,
+                     learning_rate, n_epochs, device)
