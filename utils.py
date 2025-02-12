@@ -1,14 +1,9 @@
 import xml.etree.ElementTree as ET
-import numpy as np
 import os
-import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from tqdm import tqdm
-import torchvision
 import torch
 from torchvision import ops
 import torch.nn.functional as F
-import torch.optim as optim
 import math
 
 def parse_annotation(annotation_path, imgs_dir):
@@ -29,7 +24,7 @@ def parse_annotation(annotation_path, imgs_dir):
     imgs_list_dir = []
     count = 0
     for xml_file in os.listdir(annotation_path):
-        if count >= 500:
+        if count >= 1000:
             break
         file_path = os.path.join(annotation_path, xml_file)
         tree = ET.parse(file_path)
@@ -149,7 +144,7 @@ def display_anchor_centers(centers_x, centers_y, fig, axes):
 
 def generate_all_anchor_boxes(centers, scales_img):
     '''
-    with each anchor center, create 9 anchor boxes: size is 2 x 2, 4 x 4, 6 x 6 pixel of feature map 
+    with each anchor center, create 9 anchor boxes: size is 4 x 4, 8 x 8, 16 x 16 pixel of feature map 
             and have 3 scales ratio 1:1, 1:2, 2:1 corresponding height:width with each size of bounding box
     input:
         centers: (centers_x, centers_y)
@@ -159,7 +154,7 @@ def generate_all_anchor_boxes(centers, scales_img):
             len of list is number of anchor center
     '''
     ratios = [0.5, 1, 2] # 1:2, 1:1, 2:1 width:height
-    scales = [2, 4, 6]
+    scales = [4, 8, 16]
     scales = [scale * scales_img for scale in scales]
 
     anchor_boxes = []
@@ -254,12 +249,14 @@ def generate_proposals(anchors, offsets):
     output:
         proposals: ((x, y, x, y),..) Nx4
     '''
-
+    proposals = torch.zeros(anchors.size()).to(anchors.device)
+    # check if anchors is empty
+    if anchors.size(0) == 0:
+        return proposals
     # convert anchor boxes from xyxy to xywh
     anchors = ops.box_convert(anchors, in_fmt='xyxy', out_fmt='xywh')
     offsets = offsets.to(anchors.device)
     # generate proposals
-    proposals = torch.zeros(anchors.size()).to(anchors.device)
     proposals[:, 0] = anchors[:, 0] + offsets[:, 0] * anchors[:, 2]
     proposals[:, 1] = anchors[:, 1] + offsets[:, 1] * anchors[:, 3]
     proposals[:, 2] = anchors[:, 2] * torch.exp(offsets[:, 2])
@@ -271,7 +268,7 @@ def generate_proposals(anchors, offsets):
     return proposals
 
 
-def calc_gt_offset(pos_anc_coords, gt_bbox_mapping): # n_pos x 4
+def calc_gt_offset(pos_anc_coords, gt_bbox_mapping):
     '''
     calculate offset between positive anchor boxes and the gt boxes it represents
     input:

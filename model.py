@@ -3,7 +3,6 @@ from skimage.transform import resize
 from utils import *
 import os
 import torch
-import torchvision
 from torchvision import ops
 import torch.nn as nn
 import torch.nn.functional as F
