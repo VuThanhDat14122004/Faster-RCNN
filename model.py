@@ -28,29 +28,26 @@ class FeatureExtractor(nn.Module):
 class ProposalModule(nn.Module):
     def __init__(self):
         super(ProposalModule, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels=256,
-                               out_channels=256, kernel_size=3,
-                               padding=1) # 256x25x25 -> 256x25x25
-        self.cls_logist = nn.Conv2d(in_channels=256,
-                                    out_channels=9*2, kernel_size=1,
-                                    stride=1, padding=0) # 256x25x25 -> 18x25x25
-        self.bbox_reg = nn.Conv2d(in_channels=256,
-                                  out_channels=9*4, kernel_size=1,
-                                  stride=1, padding=0) # 256x25x25 -> 36x25x25
+        self.conv1 = nn.Conv2d(in_channels=256, out_channels=256,
+                               kernel_size=3, padding=1) # 256x25x25 -> 256x25x25
+        self.cls_logist = nn.Conv2d(in_channels=256, out_channels=9*2,
+                                    kernel_size=1, stride=1, padding=0) # 256x25x25 -> 18x25x25
+        self.bbox_reg = nn.Conv2d(in_channels=256, out_channels=9*4,
+                                  kernel_size=1, stride=1, padding=0) # 256x25x25 -> 36x25x25
         
-    def forward(self, feature_map, positive_anchorbox_index=None,
-                negative_anchorbox_index=None,
-                positive_anchorbox_coordinates=None):
+    def forward(self, feature_map, scale_feature2img = 8, positive_anchorbox_index=None,
+                negative_anchorbox_index=None, positive_anchorbox_coordinates=None):
         x = self.conv1(feature_map)
         cls_logist = self.cls_logist(x)
         bbox_reg = self.bbox_reg(x)
         mode = 'train'
-        if positive_anchorbox_index is None or \
-            negative_anchorbox_index is None or \
+        if positive_anchorbox_index is None or\
+            negative_anchorbox_index is None or\
                 positive_anchorbox_coordinates is None:
             mode = 'eval'
         if mode == 'eval':
-            return cls_logist, bbox_reg
+            return cls_logist.contiguous().view(-1, 2),\
+                bbox_reg.contiguous().view(-1, 4)*scale_feature2img
         # get logist score of positive and negative anchor boxes
         cls_logist_pos = cls_logist.contiguous().view(-1, 2)[positive_anchorbox_index]
         cls_logist_neg = cls_logist.contiguous().view(-1, 2)[negative_anchorbox_index]
@@ -58,9 +55,11 @@ class ProposalModule(nn.Module):
         # get offsets for positive anchor boxes
         offsets_pos = bbox_reg.contiguous().view(-1, 4)[positive_anchorbox_index]
         # generate proposal boxes
-        proposals = generate_proposals(positive_anchorbox_coordinates, offsets_pos)
+        proposals = generate_proposals(positive_anchorbox_coordinates,
+                                       offsets_pos*scale_feature2img)
 
-        return cls_logist_pos, cls_logist_neg, offsets_pos, proposals
+        return cls_logist_pos, cls_logist_neg,\
+            offsets_pos*scale_feature2img, proposals
 
     
 class RegionProposalNetwork(nn.Module):
@@ -162,19 +161,37 @@ class RegionProposalNetwork(nn.Module):
                                           in_fmt='xywh', out_fmt='xyxy')
         bboxes_neg_xyxy = ops.box_convert(all_location_boxes[0][all_label_boxes[0] == 0],
                                           in_fmt='xywh', out_fmt='xyxy')
-        pos_score, neg_score, offset_pos, proposals = self.proposal_module(feature_map,
+        pos_score, neg_score, offset_pos, proposals = self.proposal_module(feature_map, scale_center,
                                                                            pos_index, neg_index,
                                                                            bboxes_pos_xyxy)
         
         gt_offset = calc_gt_offset(bboxes_pos_xyxy,
                                    anchor_boxes_max_iou_coordinates[pos_index])
-        cls_loss = calc_cls_loss(pos_score, neg_score)
+        cls_loss = calc_cls_loss(pos_score, neg_score) # [1, 0] is negative, [0, 1] is positive
         reg_loss = calc_bbox_reg_loss(gt_offset, offset_pos)
 
         total_rpn_loss = self.w_conf* cls_loss + self.w_reg*reg_loss
 
         return total_rpn_loss, feature_map, proposals, \
             pos_index, gt_classes_img[pos_index]
+    def inferences(self, img_data):
+        feature_map = self.feature_extractor(img_data)
+        # generate anchors
+        _, _, feature_width, feature_height = feature_map.shape
+        scale_center = img_data.shape[2]/feature_width
+        centers_x, centers_y = generate_anchor_centers((feature_height,
+                                                        feature_width), scale_center)
+        centers = [[x, y] for x in centers_x for y in centers_y]
+        # generate anchor boxes
+        all_bboxes = generate_all_anchor_boxes(centers, scale_center)
+        all_bboxes_tensor = torch.stack(all_bboxes, dim=0)
+        # get conf_score and offsets
+        conf_score, offsets = self.proposal_module(feature_map)
+        # get proposals
+        pos_index = torch.where(conf_score[:, 1] > conf_score[:, 0])[0]
+        proposals = generate_proposals(all_bboxes_tensor.view(-1, 4)[pos_index],
+                                       offsets[pos_index])
+        return proposals, conf_score[pos_index], feature_map
 
 class ClassificationModule(nn.Module):
     def __init__(self, n_classes,
@@ -235,14 +252,16 @@ class TwoStageDetector(nn.Module):
                                          proposal_module)
         self.classifier = ClassificationModule(n_classes)
     def forward(self, img_data, gt_boxes, gt_classes):
-        rpn_loss, feature_map, \
-            proposals, pos_index, gt_classes = self.rpn(img_data,
-                                                        gt_boxes, gt_classes)
-        classifier_loss = self.classifier(feature_map,
-                                          proposals,
-                                          gt_classes)
+        rpn_loss, feature_map, proposals,\
+            pos_index, gt_classes = self.rpn(img_data, gt_boxes, gt_classes)
+        classifier_loss = self.classifier(feature_map, proposals, gt_classes)
         total_loss = rpn_loss + classifier_loss
         return total_loss
+    def inferences(self, img_data):
+        proposals, conf_score, feature_map = self.rpn.inferences(img_data)
+        cls_score = self.classifier(feature_map, proposals)
+        return proposals, conf_score, cls_score
+        
 
 class ObjectDetectionDataset(Dataset):
     def __init__(self, annotation_path, img_dir, img_size): # name2idx is encode classname as int, name2idx is encoder.

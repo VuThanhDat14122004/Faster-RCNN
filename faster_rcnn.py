@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch import optim
+import pickle
 
 # Create dataset and dataloader
 annotations_path = "VOCdevkit/VOC2007/Annotations"
@@ -37,12 +38,13 @@ def training(model, dataloader, learning_rate, n_epoch, device):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             loss_o += loss.item()
             pbar.set_description(f'Epoch {i+1}/{n_epoch} Loss: {loss.item():.4f}')
         loss_list.append(loss_o/len(dataloader))
+        torch.save(two_stage_detector.state_dict(), 'two_stage_detector.pth')
+        with open(f'epoch_h{i + 1}loss.pickle', "wb") as handle:
+            pickle.dump(loss_list, handle, protocol=pickle.HIGHEST_PROTOCOL)
     return loss_list
-
 # Feature Extractor
 feature_extractor =  FeatureExtractor()
 
