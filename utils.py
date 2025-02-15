@@ -291,7 +291,7 @@ def calc_gt_offset(pos_anc_coords, gt_bbox_mapping):
 
     # adjust width and height of anchor boxes avoid log(0)
     eps = torch.finfo(width_anchor_boxes.dtype).eps
-    width_anchor_boxes = torch.clamp_min(width_anchor_boxes, eps) # clamp_min: keep min value is là eps, avoid = 0
+    width_anchor_boxes = torch.clamp_min(width_anchor_boxes, eps) # clamp_min: keep min value is eps, avoid = 0
     height_anchor_boxes = torch.clamp_min(height_anchor_boxes, eps)
 
     gt_offsets[:,0] = (centers_x_gt - centers_x) / width_anchor_boxes
@@ -302,7 +302,7 @@ def calc_gt_offset(pos_anc_coords, gt_bbox_mapping):
     return gt_offsets
     
 
-def calc_cls_loss(conf_scores_pos, conf_score_neg):
+def calc_cls_loss(conf_score_pos, conf_score_neg):
     '''
     calculate classification loss
     input:
@@ -311,14 +311,14 @@ def calc_cls_loss(conf_scores_pos, conf_score_neg):
     output:
         loss: tensor (1)
     '''
-    target_pos = torch.ones_like(conf_scores_pos)
-    target_neg = torch.zeros_like(conf_score_neg)
+    target_pos = torch.tensor([[0,1]]*conf_score_pos.shape[0]).to(conf_score_pos.device)
+    target_neg = torch.tensor([[1,0]]*conf_score_neg.shape[0]).to(conf_score_neg.device)
 
-    target = torch.cat((target_pos, target_neg))
-    input = torch.cat((conf_scores_pos, conf_score_neg))
+    target = torch.cat((target_pos, target_neg)).float()
+    input = torch.cat((conf_score_pos, conf_score_neg)).float()
 
     loss = F.binary_cross_entropy_with_logits(input, target,
-                                              reduction='sum')
+                                                reduction='sum')
     return loss
 
 def calc_bbox_reg_loss(gt_offset, reg_offset_pos):
